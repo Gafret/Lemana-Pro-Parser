@@ -12,7 +12,7 @@ import structlog
 
 log = structlog.get_logger()
 
-load_dotenv()
+load_dotenv(dotenv_path="./headers.config.env")
 
 HEADERS = {
     "Apikey": os.getenv("APIKEY"),
@@ -213,5 +213,6 @@ class LemanaProItemParser:
         log.info("CHECKPOINT CREATED")
 
 
-scraper = LemanaProItemParser(headers=HEADERS)
-scraper.scrape(catalogue_item="keramogranit", region_id=34)
+if __name__ == "__main__":
+    scraper = LemanaProItemParser(headers=HEADERS, output_filename="moscow_keramogranit")
+    scraper.scrape(catalogue_item="keramogranit", region_id=34)
