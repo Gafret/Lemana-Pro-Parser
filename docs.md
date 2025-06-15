@@ -59,10 +59,10 @@ Mobile-Build: 0000
 "limitFrom":0, // сколько элементов пропустить с начала (пагинация)
 "regionsId":0000, // id региона
 "firebasePseudoId":"NONE",
-"availability":true,
+"availability":true, // наличие товаров
 "showProducts":true,
 "showFacets":true,
-"showServices":true,
+"showServices":true, // показывать ли списог услуг
 "sitePath":"/catalogue/keramogranit/" // что смотрим
 }
 ```
