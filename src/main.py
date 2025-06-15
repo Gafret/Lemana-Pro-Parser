@@ -1,0 +1,192 @@
+import random
+import time
+import csv
+import os
+
+import requests
+from requests.exceptions import InvalidJSONError, RequestException, Timeout, HTTPError
+from dotenv import load_dotenv
+
+load_dotenv()
+
+HEADERS = {
+    "Apikey": os.getenv("APIKEY"),
+    "Mobile-Platform": os.getenv("MOBILE_PLATFORM"),
+    "User_id": os.getenv("USER_ID"),
+    "App_version": os.getenv("APP_VERSION"),
+    "Mobile-Version": os.getenv("MOBILE_VERSION"),
+    "Mobile-Version-Os": os.getenv("MOBILE_VERSION_OS"),
+    "Mobile-Build": os.getenv("MOBILE_BUILD"),
+    "Host": "mobile.api-lmn.ru",
+    "Ab-Test-Option": "opt1",
+    "User-Agent": "ktor-client",
+    "Plp-Srp-View": "mixed",
+    "Pdp-Content-Ab-Option": "all",
+    "Content-Length": "232",
+    "Accept-Language": "ru",
+    "X-Firebase-Instanceid": "3B1FA9F85EE8440F9B36261276850518",
+    "Accept-Charset": "UTF-8",
+    "Accept": "application/json",
+    "Content-Type": "application/json; charset=UTF-8",
+    "Accept-Encoding": "gzip, deflate, br",
+}
+
+
+# 34 москва и мособласть
+# 506 санкт петербург
+# TODO: make checkpointer
+# TODO: refactor exception handling
+# TODO: add some fresh docs
+# TODO: allow to choose from which point to start
+# TODO: add CLI interface
+# TODO: add headers setup with dot env config or similar
+# TODO: probably retry then got zero items
+
+class LemanaProItemParser:
+    search_url = "https://mobile.api-lmn.ru/mobile/v2/search"
+
+    def __init__(
+            self,
+            headers: dict[str, str],
+            *,
+            output_filename: str = "lemana_positions"
+    ):
+        self.output_filename = output_filename
+        self.session = requests.Session()
+        self.session.headers.update(headers)
+
+    def scrape(
+            self,
+            catalogue_item: str,
+            region_id: int,
+            *,
+            only_available: bool = True,
+            show_services: bool = False,
+            show_facets: bool = False
+    ):
+        search_body = self._create_search_body(
+            catalogue_item=catalogue_item,
+            region_id=region_id,
+            only_available=only_available,
+            show_services=show_services,
+            show_facets=show_facets,
+        )
+        page_counter = 1
+        with open(f"{self.output_filename}.csv", "w") as output:
+            data_writer = csv.writer(output, delimiter=";")
+            data_writer.writerow(["id", "name", "brand", "regular_price", "discount_price"])
+
+            while True:
+                offset = (page_counter - 1) * 30
+                search_body["limitFrom"] = offset
+
+                try:
+                    response = self.session.post(url=self.search_url, json=search_body)
+                    print(response.status_code)
+                    headers = response.headers
+                    body = response.json()
+                except (InvalidJSONError, Timeout, HTTPError, RequestException) as err:
+                    if isinstance(err, InvalidJSONError):
+                        print(response.text)
+                        print("Something wrong with response json", err)
+                    elif isinstance(err, Timeout):
+                        print(response.text)
+                        print("Too much time has passed", err)
+                        print("Retry in 20 sec")
+                        time.sleep(20)
+                    elif isinstance(err, HTTPError):
+                        print(response.text)
+                        print("Wrong response status", err)
+                    elif isinstance(err, RequestException):
+                        print(response.text)
+                        print("Something with request", err)
+                    break
+                except Exception as err:
+                    print(response.text)
+                    print("Unknown issue", err)
+                    break
+
+                items = body.get("items", [])
+                total_item_count = body.get('items_cnt')
+                item_array_length = len(items)
+
+                rate_limit_remaining = int(headers.get("RateLimit-Remaining"))
+                secs_until_reset = int(headers.get("RateLimit-Reset"))
+
+                # while API is being scraped, Lemana can change their records,
+                # and then it creates issues in pagination for us
+                if offset > total_item_count:
+                    break
+
+                print(
+                    f"-STATS-\n"
+                    f"TOTAL_ITEMS: {total_item_count}\n"
+                    f"ITEMS_IN_RESPONSE: {item_array_length}\n"
+                    f"CURRENT_PAGE: {page_counter}\n"
+                    f"PROGRESS: {((item_array_length * page_counter / total_item_count) * 100):.2f}%\n"
+                    f"RATE_LIMIT_REMAINING: {rate_limit_remaining}\n"
+                    f"SECS_UNTIL_LIMIT_RESET: {secs_until_reset}\n"
+                )
+
+                for item in items:
+                    id = item.get("articul")
+                    name = item.get("displayedName")
+                    brand = item.get("brand")
+
+                    main_price = None
+                    old_price = None
+
+                    for price in item.get("prices"):
+                        if price.get("type") == "displayMain":
+                            main_price = price.get("price")
+                        elif price.get("type") == "displayOld":
+                            old_price = price.get("price")
+
+                    regular_price = None
+                    discount_price = None
+
+                    if old_price is not None:
+                        regular_price = old_price
+                        discount_price = main_price
+                    else:
+                        regular_price = main_price
+
+                    data_writer.writerow([id, name, brand, regular_price, discount_price])
+
+                if rate_limit_remaining < 5000:
+                    print("WE NEED TO WAIT TO RESET LIMITER")
+                    time.sleep(secs_until_reset + 10)
+
+                page_counter += 1
+                time.sleep(random.random() * 10)
+
+    def _create_search_body(
+            self,
+            catalogue_item: str,
+            region_id: int,
+            *,
+            only_available: bool = True,
+            show_services: bool = False,
+            show_facets: bool = False
+    ):
+        search_body = {
+            "familyId": "",
+            "limitCount": 30,
+            "limitFrom": 0,
+            "regionsId": region_id,
+            "firebasePseudoId": "3B1FA9F85EE8440F9B36261276850518",
+            "availability": only_available,
+            "showProducts": True,
+            "showFacets": show_facets,
+            "showServices": show_services,
+            "sitePath": f"/catalogue/{catalogue_item}/"
+        }
+
+        return search_body
+
+    def _create_checkpoint(self):
+        pass
+
+
+scraper = LemanaProItemParser(headers=HEADERS)
+scraper.scrape(catalogue_item="keramogranit", region_id=34)
