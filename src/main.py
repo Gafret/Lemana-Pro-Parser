@@ -30,7 +30,6 @@ HEADERS = {
     "Pdp-Content-Ab-Option": "all",
     "Content-Length": "232",
     "Accept-Language": "ru",
-    "X-Firebase-Instanceid": "3B1FA9F85EE8440F9B36261276850518",
     "Accept-Charset": "UTF-8",
     "Accept": "application/json",
     "Content-Type": "application/json; charset=UTF-8",
@@ -39,6 +38,7 @@ HEADERS = {
 
 
 class LemanaProItemParser:
+    """API parser for Lemana Pro"""
     search_url = "https://mobile.api-lmn.ru/mobile/v2/search"
 
     def __init__(
@@ -186,7 +186,6 @@ class LemanaProItemParser:
             "limitCount": 30,
             "limitFrom": 0,
             "regionsId": region_id,
-            "firebasePseudoId": "3B1FA9F85EE8440F9B36261276850518",
             "availability": only_available,
             "showProducts": True,
             "showFacets": show_facets,
