@@ -1,3 +1,5 @@
+import datetime
+import json
 import random
 import time
 import csv
@@ -35,10 +37,9 @@ HEADERS = {
     "Accept-Encoding": "gzip, deflate, br",
 }
 
-
 # 34 москва и мособласть
 # 506 санкт петербург
-# TODO: make checkpointer
+
 
 class LemanaProItemParser:
     search_url = "https://mobile.api-lmn.ru/mobile/v2/search"
@@ -62,7 +63,20 @@ class LemanaProItemParser:
             show_services: bool = False,
             show_facets: bool = False,
             start_page: int = 1,
+            timeout_retries: int = 3,
     ):
+        """
+        Main function that responsible for requesting and parsing data from mobile app API of Lemana Pro
+
+        :param catalogue_item: Name of the category in catalogue we want to parse
+        :param region_id: Id of the region from which to parse available items
+        :param only_available: Flag if we want to parse only available in regions positions
+        :param show_services: Flag to show services in json response of the API
+        :param show_facets: Same as services but for facets
+        :param start_page: From which page to start querying, useful when checkpoint has been created already
+        :param timeout_retries: Number of retries on timeout before stopping requests
+        :return:
+        """
         search_body = self._create_search_body(
             catalogue_item=catalogue_item,
             region_id=region_id,
@@ -90,7 +104,8 @@ class LemanaProItemParser:
                     elif isinstance(err, Timeout):
                         log.warn("Too much time has passed, retrying", err, response.status_code)
                         time.sleep(20)
-                        continue
+                        if timeout_retries > 0:
+                            continue
 
                     elif isinstance(err, HTTPError):
                         log.error("Wrong response status", err, response.status_code)
@@ -98,6 +113,7 @@ class LemanaProItemParser:
                     elif isinstance(err, RequestException):
                         log.error("Something with request", err, response.status_code)
 
+                    self._create_checkpoint(reason=err, status=response.status_code, page=page_counter)
                     break
                 except Exception as err:
                     log.error("Unknown issue", err, response.status_code)
@@ -166,6 +182,7 @@ class LemanaProItemParser:
             show_services: bool = False,
             show_facets: bool = False
     ):
+        """Creates request body for search endpoint"""
         search_body = {
             "familyId": "",
             "limitCount": 30,
@@ -181,11 +198,19 @@ class LemanaProItemParser:
 
         return search_body
 
-    def _create_checkpoint(self):
-        pass
+    def _create_checkpoint(self, *, reason: Exception, status: int, page: int):
+        """Creates checkpoint in case of error in request, so you can continue from last page"""
+        data = {
+            "time": datetime.datetime.now(),
+            "status_code": status,
+            "reason": reason,
+            "last_page": page
+        }
 
-    def _load_checkpoint(self):
-        pass
+        with open("checkpoint.json", "w") as file:
+            json.dump(data, file)
+
+        log.info("CHECKPOINT CREATED")
 
 
 scraper = LemanaProItemParser(headers=HEADERS)
