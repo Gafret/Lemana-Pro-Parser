@@ -4,6 +4,7 @@ import random
 import time
 import csv
 import os
+from enum import IntEnum
 
 import requests
 from requests.exceptions import InvalidJSONError, RequestException, Timeout, HTTPError
@@ -11,8 +12,10 @@ from dotenv import load_dotenv
 import structlog
 
 log = structlog.get_logger()
-
 load_dotenv(dotenv_path="./headers.config.env")
+
+
+MAX_BATCH_SIZE = 30  # max elements per page, tested with API
 
 HEADERS = {
     "Apikey": os.getenv("APIKEY"),
@@ -28,7 +31,6 @@ HEADERS = {
     "User-Agent": "ktor-client",
     "Plp-Srp-View": "mixed",
     "Pdp-Content-Ab-Option": "all",
-    "Content-Length": "232",
     "Accept-Language": "ru",
     "Accept-Charset": "UTF-8",
     "Accept": "application/json",
@@ -37,18 +39,30 @@ HEADERS = {
 }
 
 
+class Regions(IntEnum):
+    MOSCOW = 34
+    SAINT_PETERSBURG = 506
+
+
 class LemanaProItemParser:
-    """API parser for Lemana Pro"""
+    """Universal API parser for Lemana Pro"""
+
     search_url = "https://mobile.api-lmn.ru/mobile/v2/search"
 
     def __init__(
             self,
             headers: dict[str, str],
             *,
-            output_filename: str = "lemana_positions"
+            output_filename: str = "lemana_positions",
+            batch_size: int = MAX_BATCH_SIZE,
     ):
+        if batch_size > MAX_BATCH_SIZE:
+            raise Exception("batch_size can't be greater than MAX_BATCH_SIZE")
+
         self.output_filename = output_filename
         self.session = requests.Session()
+        self.batch_size = batch_size
+
         self.session.headers.update(headers)
 
     def scrape(
@@ -61,6 +75,7 @@ class LemanaProItemParser:
             show_facets: bool = False,
             start_page: int = 1,
             timeout_retries: int = 3,
+            timeout_wait_secs: int = 30,
     ):
         """
         Main function that responsible for requesting and parsing data from mobile app API of Lemana Pro
@@ -72,6 +87,7 @@ class LemanaProItemParser:
         :param show_facets: Same as services but for facets
         :param start_page: From which page to start querying, useful when checkpoint has been created already
         :param timeout_retries: Number of retries on timeout before stopping requests
+        :param timeout_wait_secs: Number of seconds to wait between retries
         :return:
         """
         search_body = self._create_search_body(
@@ -88,33 +104,36 @@ class LemanaProItemParser:
             data_writer.writerow(["id", "name", "brand", "regular_price", "discount_price"])
 
             while True:
-                offset = (page_counter - 1) * 30
+                offset = (page_counter - 1) * self.batch_size
                 search_body["limitFrom"] = offset
 
                 try:
-                    response = self.session.post(url=self.search_url, json=search_body)
+                    response = self.session.post(url=self.search_url, json=search_body, timeout=3)
                     headers = response.headers
                     body = response.json()
                 except (InvalidJSONError, Timeout, HTTPError, RequestException) as err:
                     if isinstance(err, InvalidJSONError):
-                        log.error("Something wrong with response json", err, response.status_code)
+                        log.error("Something wrong with response json", error=err)
 
                     elif isinstance(err, Timeout):
-                        log.warn("Too much time has passed, retrying", err, response.status_code)
-                        time.sleep(20)
+                        log.warn("Too much time has passed, retrying", error=err)
+
                         if timeout_retries > 0:
+                            time.sleep(timeout_wait_secs)
+                            timeout_retries -= 1
                             continue
 
                     elif isinstance(err, HTTPError):
-                        log.error("Wrong response status", err, response.status_code)
+                        log.error("Wrong response status", error=err)
 
                     elif isinstance(err, RequestException):
-                        log.error("Something with request", err, response.status_code)
+                        log.error("Something with request", error=err)
 
-                    self._create_checkpoint(reason=err, status=response.status_code, page=page_counter)
+                    self._create_checkpoint(reason=err, page=page_counter)
                     break
+
                 except Exception as err:
-                    log.error("Unknown issue", err, response.status_code)
+                    log.error("Unknown issue", error=err)
                     break
 
                 items = body.get("items", [])
@@ -130,7 +149,7 @@ class LemanaProItemParser:
                     break
 
                 log.info(
-                    f"-STATS-\n"
+                    f"\n-STATS-\n"
                     f"TOTAL_ITEMS: {total_item_count}\n"
                     f"ITEMS_IN_RESPONSE: {item_array_length}\n"
                     f"CURRENT_PAGE: {page_counter}\n"
@@ -166,7 +185,7 @@ class LemanaProItemParser:
 
                 if rate_limit_remaining < 5000:
                     log.info("WE NEED TO WAIT TO RESET LIMITER")
-                    time.sleep(secs_until_reset + 10)
+                    time.sleep(secs_until_reset)
 
                 page_counter += 1
                 time.sleep(random.random() * 10)
@@ -183,7 +202,7 @@ class LemanaProItemParser:
         """Creates request body for search endpoint"""
         search_body = {
             "familyId": "",
-            "limitCount": 30,
+            "limitCount": self.batch_size,
             "limitFrom": 0,
             "regionsId": region_id,
             "availability": only_available,
@@ -195,24 +214,22 @@ class LemanaProItemParser:
 
         return search_body
 
-    def _create_checkpoint(self, *, reason: Exception, status: int, page: int):
+    def _create_checkpoint(self, *, reason: Exception, page: int):
         """Creates checkpoint in case of error in request, so you can continue from last page"""
         data = {
-            "time": datetime.datetime.now(),
-            "status_code": status,
-            "reason": reason,
-            "last_page": page
+            "time": str(datetime.datetime.now()),
+            "reason": str(reason),
+            "last_page": str(page),
         }
 
         with open("checkpoint.json", "w") as file:
-            json.dump(data, file)
+            json.dump(data, file, indent=2)
 
         log.info("CHECKPOINT CREATED")
 
 
-# region id
-# 34 Москва и Мос.область
-# 506 Санкт-Петербург
 if __name__ == "__main__":
-    scraper = LemanaProItemParser(headers=HEADERS, output_filename="saint_petersburg_keramogranit")
-    scraper.scrape(catalogue_item="keramogranit", region_id=506)
+    scraper = LemanaProItemParser(headers=HEADERS, output_filename="scraper_output")
+
+    # Example
+    scraper.scrape(catalogue_item="keramogranit", region_id=Regions.SAINT_PETERSBURG)
