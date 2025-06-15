@@ -39,9 +39,6 @@ HEADERS = {
 # 34 москва и мособласть
 # 506 санкт петербург
 # TODO: make checkpointer
-# TODO: refactor exception handling
-# TODO: add some fresh docs
-# TODO: allow to choose from which point to start
 
 class LemanaProItemParser:
     search_url = "https://mobile.api-lmn.ru/mobile/v2/search"
@@ -64,6 +61,7 @@ class LemanaProItemParser:
             only_available: bool = True,
             show_services: bool = False,
             show_facets: bool = False,
+            start_page: int = 1,
     ):
         search_body = self._create_search_body(
             catalogue_item=catalogue_item,
@@ -72,7 +70,7 @@ class LemanaProItemParser:
             show_services=show_services,
             show_facets=show_facets,
         )
-        page_counter = 1
+        page_counter = start_page
         with open(f"{self.output_filename}.csv", "w") as output:
             data_writer = csv.writer(output, delimiter=";")
             data_writer.writerow(["id", "name", "brand", "regular_price", "discount_price"])
