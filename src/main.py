@@ -37,9 +37,6 @@ HEADERS = {
     "Accept-Encoding": "gzip, deflate, br",
 }
 
-# 34 москва и мособласть
-# 506 санкт петербург
-
 
 class LemanaProItemParser:
     search_url = "https://mobile.api-lmn.ru/mobile/v2/search"
@@ -85,6 +82,7 @@ class LemanaProItemParser:
             show_facets=show_facets,
         )
         page_counter = start_page
+
         with open(f"{self.output_filename}.csv", "w") as output:
             data_writer = csv.writer(output, delimiter=";")
             data_writer.writerow(["id", "name", "brand", "regular_price", "discount_price"])
@@ -213,6 +211,9 @@ class LemanaProItemParser:
         log.info("CHECKPOINT CREATED")
 
 
+# region id
+# 34 Москва и Мос.область
+# 506 Санкт-Петербург
 if __name__ == "__main__":
-    scraper = LemanaProItemParser(headers=HEADERS, output_filename="moscow_keramogranit")
-    scraper.scrape(catalogue_item="keramogranit", region_id=34)
+    scraper = LemanaProItemParser(headers=HEADERS, output_filename="saint_petersburg_keramogranit")
+    scraper.scrape(catalogue_item="keramogranit", region_id=506)
